@@ -1,18 +1,17 @@
 // ==UserScript==
 // @name         全网VIP视频免费破解去广告
 // @namespace    https://yg.local/vip-parse
-// @version      3.2.1
-// @description  多平台VIP视频解析（爱奇艺/腾讯/优酷/芒果/B站/乐视）、详情页自动解析、去广告
+// @version      3.3.0
+// @description  多平台VIP视频解析（爱奇艺/腾讯/优酷/芒果/B站/乐视）、详情页自动解析、SPA 路由跟随、去广告
 // @author       YG
-// @match        *://*.iqiyi.com/v_*.html*
-// @match        *://*.iqiyi.com/a_*.html*
-// @match        *://*.iqiyi.com/dianying/*
-// @match        *://v.qq.com/x/cover/*/*
-// @match        *://v.qq.com/x/page/*.html*
-// @match        *://*.youku.com/v_show/*
-// @match        *://*.mgtv.com/b/*/*
+// @match        *://*.iqiyi.com/*
+// @match        *://v.qq.com/*
+// @match        *://*.qq.com/x/cover/*
+// @match        *://*.qq.com/x/page/*
+// @match        *://*.youku.com/*
+// @match        *://*.mgtv.com/*
 // @match        *://*.bilibili.com/video/*
-// @match        *://*.le.com/ptv/vplay/*
+// @match        *://*.le.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
@@ -53,13 +52,19 @@
     return (apiList[cfg.apiIndex] || DEFAULT_APIS[0]).url;
   };
 
-  const isDetailPage = () =>
-    /iqiyi\.com\/(v_|a_|dianying)/.test(location.href) ||
-    /v\.qq\.com\/x\/(cover|page)/.test(location.href) ||
-    /youku\.com\/v_show/.test(location.href) ||
-    /mgtv\.com\/b\//.test(location.href) ||
-    /bilibili\.com\/video/.test(location.href) ||
-    /le\.com\/ptv\/vplay/.test(location.href);
+  /* ==================== 平台识别 ==================== */
+  // 注意：腾讯视频 / 优酷 / 芒果 都是 SPA，URL 会在不刷新的情况下变化，
+  // 所以判定放在“当前 URL”上，并由下面的路由监听反复调用。
+  const isDetailPage = () => {
+    const u = location.href;
+    return /iqiyi\.com\/(v_|a_|dianying|movie|tv)/.test(u)
+        || /v\.qq\.com\/x\/(cover|page)\//.test(u)
+        || /\.qq\.com\/x\/(cover|page)\//.test(u)
+        || /youku\.com\/v_show\//.test(u)
+        || /mgtv\.com\/b\//.test(u)
+        || /bilibili\.com\/video\//.test(u)
+        || /le\.com\/ptv\/vplay\//.test(u);
+  };
 
   const parseUrl = (target) => {
     const base = apiUrl();
@@ -146,30 +151,33 @@
     const css = `
       .qy-player-ad, .iqp-player-ad, [class*="pause-ad"], [class*="player-ad"],
       .qy-player-vippay-popup, .iqp-vip-guide, .iqp-star-float,
-      div[class*="advert"], #qy-player-ad, .qy-player-guide-popup { display:none !important; }
+      div[class*="advert"], #qy-player-ad, .qy-player-guide-popup,
+      .txp_ad, .txp_ad_skip, [class*="txp-ad"], [class*="mod_ad"] { display:none !important; }
     `;
     GM_addStyle(css);
 
-    // 前贴片 / 暂停广告：自动点“关闭广告 / 跳过”
     const timer = setInterval(() => {
       const btns = document.querySelectorAll(
-        '.qy-player-ad-close, .iqp-player-ad-close, [class*="skip"], [class*="Skip"], [class*="closeAd"]');
+        '.qy-player-ad-close, .iqp-player-ad-close, [class*="skip"], [class*="Skip"], [class*="closeAd"], .txp_ad_skip');
       btns.forEach(b => { if (/跳过|关闭|skip|close/i.test(b.textContent || b.className)) b.click(); });
       const v = document.querySelector('video');
       if (v && v.duration > 0) {
-        const ad = document.querySelector('.qy-player-ad, .iqp-player-ad, [class*="player-ad"]');
-        if (ad && !ad.offsetParent === false) v.muted = !!ad;
+        const ad = document.querySelector('.qy-player-ad, .iqp-player-ad, [class*="player-ad"], [class*="txp-ad"]');
+        if (ad && ad.offsetParent !== null) v.muted = true;
       }
     }, 1000);
     setTimeout(() => clearInterval(timer), 120000);
   }
 
   /* ==================== 浮动按钮 ==================== */
-  function floatBtn() {
+  function ensureUi() {
     if (!cfg.showFloatBtn) return;
+    if (document.getElementById('yg-fab')) return;
+    if (!document.body) return;
     const b = document.createElement('div');
     b.id = 'yg-fab';
     b.textContent = 'VIP解析';
+    b.title = '当前页面：' + location.href;
     b.onclick = () => openParse(location.href, cfg.openMode);
     document.body.appendChild(b);
   }
@@ -196,16 +204,55 @@
     #yg-set #yg-save{background:#ff5f00;color:#fff}
   `);
 
+  /* ==================== 自动解析（含 SPA 路由跟随） ==================== */
+  const handled = new Set();     // 已自动解析过的 URL，避免回弹重开
+  let lastUrl = '';
+
+  function maybeAuto() {
+    if (!cfg.autoParse) return;
+    if (!isDetailPage()) return;
+    const href = location.href;
+    if (handled.has(href)) return;
+    handled.add(href);
+    setTimeout(() => {
+      if (document.getElementById('yg-parse-box')) return;   // 用户已手动开过
+      openParse(href, cfg.openMode);
+    }, cfg.delay);
+  }
+
+  function onUrlChange() {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    ensureUi();      // SPA 切页可能重建 body，按钮丢了就补回来
+    maybeAuto();     // 腾讯/优酷/芒果 换集不刷新，这里补触发
+  }
+
+  function watchRoute() {
+    lastUrl = location.href;
+    // 1) 定时兜底（SPA 常用 router，不一定动 history 对象）
+    setInterval(onUrlChange, 700);
+    // 2) 主动接管 history，切换瞬间就触发
+    ['pushState', 'replaceState'].forEach(k => {
+      const orig = history[k];
+      if (typeof orig !== 'function') return;
+      history[k] = function () {
+        const r = orig.apply(this, arguments);
+        setTimeout(onUrlChange, 0);
+        return r;
+      };
+    });
+    window.addEventListener('popstate', onUrlChange);
+    window.addEventListener('hashchange', onUrlChange);
+  }
+
   /* ==================== 启动 ==================== */
   const boot = () => {
     killAds();
-    floatBtn();
+    ensureUi();
+    watchRoute();
+    maybeAuto();
     GM_registerMenuCommand('解析设置 / 配置解析接口', openSettings);
     GM_registerMenuCommand('立即解析当前页面', () => openParse(location.href, cfg.openMode));
-
-    if (cfg.autoParse && isDetailPage()) {
-      setTimeout(() => openParse(location.href, cfg.openMode), cfg.delay);
-    }
   };
 
   if (document.body) boot(); else window.addEventListener('DOMContentLoaded', boot);
