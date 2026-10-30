@@ -2,14 +2,16 @@
 
 一个 Tampermonkey（篡改猴）用户脚本：在爱奇艺 / 腾讯视频 / 优酷 / 芒果TV / B站 / 乐视的**详情页自动用第三方解析线路替换播放器**，顺手去掉播放器广告。
 
-- 脚本本体：[`vip-parse.user.js`](./vip-parse.user.js)（v3.3.0，约 11 KB，无外部依赖）
+- 脚本本体：[`vip-parse.user.js`](./vip-parse.user.js)（v3.3.2，约 14 KB，无外部依赖）
 - 适配：Chrome / Edge + Tampermonkey 5.x（Chrome 138+ 需额外开启「允许用户脚本」）
 - 许可：仅供个人学习研究，解析线路均为第三方公开服务，可用性随时变化
 
-| 平台 | 详情页形态 | 状态 |
+> ⚠️ **时效提醒（2026-10-30 复核）**：脚本的注入、路由、URL 规范化三件事全部正常；但**公共解析线路基本团灭**——冰豆云 `bd.jx.cn` 已 302 到失效域名 `jiexi.bot.cd`，黑木耳 `api.heimuer.tv` 弹 Cloudflare 人机验证，其余常见 jx 域名均为停放页/停运页。播放能否成功现在**取决于你有没有一条活着的线路**，脚本本身已经提供了「线路自检」和「自定义接口」来随时换线。
+
+| 平台 | 详情页形态 | 脚本状态 |
 |---|---|---|
-| 爱奇艺 | `www.iqiyi.com/v_*.html` | ✅ 自动解析（实测全片时长正常） |
-| 腾讯视频 | `v.qq.com/x/cover/<cid>.html` → 跳 `.../<cid>/<vid>.html` | ✅ v3.3.0 修复，含换集 SPA 跟随 |
+| 爱奇艺 | `www.iqiyi.com/v_*.html` | ✅ 自动解析（实测出播放器，时长正常） |
+| 腾讯视频 | `v.qq.com/x/cover/<cid>.html` → 跳 `.../<cid>/<vid>.html` | ✅ v3.3.0 起修复注入，v3.3.1 起解析地址规范化为真实集数页，SPA 换集跟随 |
 | 优酷 | `v.youku.com/v_show/id_*.html` | ✅ 同上（宽 `@match` + 路由跟随） |
 | 芒果TV | `www.mgtv.com/b/<cid>/<vid>.html` | ✅ 同上 |
 | B站 / 乐视 | `bilibili.com/video/*`、`le.com/ptv/vplay/*` | ✅ 同上 |
@@ -51,9 +53,10 @@ Chrome 138 起，扩展要在页面里执行 `GM_*` 用户脚本，必须由用�
 | 配置项 | 推荐值 | 说明 |
 |---|---|---|
 | 详情页自动解析 | 开 | 进入 `iqiyi.com/v_*`、`a_*`、`dianying` 等播放页后自动弹出解析层 |
-| 首选解析接口 | 冰豆云 `https://bd.jx.cn/?url=` | 实测可用，内部用 `?url=` 参数再套一层 iframe 播放 |
-| 备用接口 | 黑木耳 `https://api.heimuer.tv/?url=` | 实测可用，JS 跳转播放 |
+| 首选解析接口 | 冰豆云 `https://bd.jx.cn/?url=` | 2026-10-30 07:00 起已失效（302 到死域名）；有活线就换掉，别迷信固定线路 |
+| 备用接口 | 黑木耳 `https://api.heimuer.tv/?url=` | 会弹 Cloudflare 人机验证，需人工点选才继续 |
 | 自定义接口 | `https://xxx/?url={url}` | `{url}` 会被替换为 `encodeURIComponent(当前详情页地址)`；不写占位符则自动拼接 |
+| 线路自检 | 面板 →「立即自检全部线路」 | v3.3.2 新增，逐条给出 `✅可用 / ❌连不上 / ❌已停放 / ❌CF人机验证 / ❌已停运` |
 | 打开方式 | 页面内嵌 / 新标签页 | 内嵌为全屏遮罩播放器，条上可「新窗口 / 换线路重试 / 关闭」 |
 | 自动解析延迟 | 1200 ms | 等站点播放器挂载完成再替换，站点慢可加到 2000~3000 |
 | 去广告 | 开 | 隐藏贴片/暂停广告元素并自动点「跳过」 |
@@ -129,21 +132,42 @@ foreach ($a in $apis) {
 
 ---
 
-## 3. 已实测线路（2026-10-30）
+## 3. 线路实测记录（2026-10-30，两次复核）
+
+**07:00 复核 —— 三大常用线路已全部不可用：**
 
 | 接口 | 结果 |
 |---|---|
-| `https://bd.jx.cn/?url=` | ✅ 200，`<title>player</title>`，`?url=` 内部建 iframe |
-| `https://api.heimuer.tv/?url=` | ✅ 200，JS 重定向播放 |
-| `https://jx.xmflv.com/?url=` | ❌ 「江湖路远，后会无期」（停运） |
-| `https://jx.aidouer.net/?url=` | ❌ 「江湖路远，后会无期」（停运） |
-| `https://www.yemu.xyz/?url=` | ❌ 已变苹果CMS社区页，无播放器 |
-| `https://jx.2s0.cn/player/?url=` | ❌ 连接失败 |
-| `https://jx.8090.fun/?url=` | ❌ 连接失败 |
-| `https://jx.playerjy.com/?url=` | ❌ 连接失败 |
-| `https://jx.jsonplayer.com/player/?url=` | ❌ 连接失败 |
+| `https://bd.jx.cn/?url=` | ❌ 200 但 302 到 `https://jiexi.bot.cd/?url=...`，该域名连不上（浏览器显示"网页可能暂时无法连接"） |
+| `https://api.heimuer.tv/?url=` | ⚠️ 200 但 iframe 内弹 **Cloudflare「我不是机器人」**，需人工点选，脚本无法代过 |
+| `https://jx.xmflv.com/?url=` | ❌ 停运页「江湖路远，后会无期」 |
+| `https://jx.hls.one/?url=` | ❌ 停运页 |
+| `https://jx.777jiexi.com/player/?url=` | ❌ 302 到 `router.parklogic.com`（域名停放） |
+| `https://jx.4kdv.com/?url=` | ❌ 302 到 `router.parklogic.com`（停放，且会把标签页卡死） |
+| `https://jx.wujinkk.com/?url=` | ❌ 停放页「恭喜，站点创建成功！」 |
+| `https://jx.2s0.cn` / `jk.8090.fun` / `jx.playerjy.com` / `jx.jsonplayer.com` / `jx.ikunvip.cn` / `jx.lelevod.com` / `play.bozrc.com` / `jx.m3u8.tv` / `jx.ffm3u8.com` / `jx.yaohuabmw.com` | ❌ 连接失败 |
 
-爱奇艺详情页实测：`https://www.iqiyi.com/v_1hdu5bn7yzg.html` → 自动解析，线路「冰豆云」，播放器总时长 `01:08:05`（全片，非试看片段）。
+**01:00 首次实测（当时有效，供对照）：**
+
+| 接口 | 结果 |
+|---|---|
+| `https://bd.jx.cn/?url=` | ✅ 可播；爱奇艺《喜剧人专场》总时长 `01:08:05`，腾讯《尚公主》片段 `00:54` |
+| `https://api.heimuer.tv/?url=` | ✅ 200 JS 跳转播放 |
+
+结论：线路池是**小时级**抖动的，同一天内就会从"能播"变成"跳停放域名"。所以判断脚本好坏要看这三件事，而不是看某一集能不能播：
+
+1. 页面有没有 `#yg-fab`（注入成功）
+2. 遮罩条有没有出现、`iframe.src` 里的 `url=` 参数是不是**当前真实播放页地址**（URL 规范化）
+3. 面板里「立即自检全部线路」的判定结果（`✅可用 / ❌连不上 / ❌已停放 / ❌CF人机验证 / ❌已停运`）
+
+### 换线流程（线路失效时）
+
+1. 播放页点右下角「VIP解析」→ 面板「线路状态 → 立即自检全部线路」，看哪条是 `✅可用`；
+2. 全红就说明公共线路已团灭，在「自定义接口」里填你自己找到的线路，模板二选一：
+   - 参数名是 `url`：`https://你的线路/?url=`（脚本自动拼 `encodeURIComponent(页面地址)`）
+   - 参数名不是 `url`：`https://你的线路/?u={url}`
+3. 保存并生效后，自动解析就会走新线路；
+4. 想批量验证候选线路，用上面的 PowerShell 片段，跳过标题含 `parklogic / 站点创建成功 / 后会无期 / Just a moment` 的域名。
 
 ---
 
@@ -159,7 +183,7 @@ foreach ($a in $apis) {
 3.3.0 已用 `watchRoute()` 处理 SPA 路由；若站点再次改路由方式，确认 `isDetailPage()` 的正则能命中新的播放页 URL。
 
 **解析层出来了但黑屏 / 一直转圈**
-换线路（遮罩条上的「换线路重试」会轮换接口并刷新），或面板里换成实测可用的接口。解析站有并发和地区限制。
+不是脚本问题，是线路挂了。先自检：面板 →「立即自检全部线路」，全红就按「换线流程」填自定义接口。3.3.2 起自检用 `GM_xmlhttpRequest` 直连线路，能识别 `连不上 / 已停放 / CF人机验证 / 已停运` 四种死法。
 
 **只想解析某一集，不要自动弹**
 面板里关掉「详情页自动解析」，改用右下角「VIP解析」手动点。

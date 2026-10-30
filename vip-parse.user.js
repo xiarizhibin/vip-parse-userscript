@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         全网VIP视频免费破解去广告
 // @namespace    https://yg.local/vip-parse
-// @version      3.3.0
-// @description  多平台VIP视频解析（爱奇艺/腾讯/优酷/芒果/B站/乐视）、详情页自动解析、SPA 路由跟随、去广告
+// @version      3.3.2
+// @description  多平台VIP视频解析（爱奇艺/腾讯/优酷/芒果/B站/乐视）、详情页自动解析、SPA 路由跟随、线路自检、去广告
 // @author       YG
 // @match        *://*.iqiyi.com/*
 // @match        *://v.qq.com/*
@@ -16,6 +16,8 @@
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -75,8 +77,11 @@
   };
 
   /* ==================== 播放器替换 / 弹窗 ==================== */
-  function openParse(target, mode) {
-    const u = parseUrl(target || location.href);
+  let autoBoxFor = '';           // 自动弹窗当前对应的 URL
+
+  function openParse(target, mode, auto) {
+    const href = target || location.href;
+    const u = parseUrl(href);
     if (!u) { alert('请先在“解析设置”里配置解析接口'); return; }
 
     if (mode === 'newtab') { window.open(u, '_blank'); return; }
@@ -103,7 +108,40 @@
         if (act === 'reload') { cfg.apiIndex = (cfg.apiIndex + 1) % apiList.length; save(); location.reload(); }
       });
     }
+    // auto=1 表示由自动解析创建；手动开的弹窗不会被 SPA 换集自动改写
+    if (auto) { box.dataset.auto = '1'; } else if (!box.dataset.auto) { box.dataset.auto = '0'; }
     box.querySelector('iframe').src = u;
+    if (box.dataset.auto === '1') autoBoxFor = href;
+  }
+
+  /* ==================== 线路自检 ==================== */
+  const PROBE_TARGET = 'https://www.iqiyi.com/v_1hdu5bn7yzg.html';
+
+  function probeLine(base) {
+    return new Promise((resolve) => {
+      if (!base) return resolve({ verdict: '未填写', status: 0 });
+      const url = /{url}/.test(base)
+        ? base.replace('{url}', encodeURIComponent(PROBE_TARGET))
+        : base + encodeURIComponent(PROBE_TARGET);
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET', url, timeout: 7000,
+          onload: (r) => {
+            const body = (r.responseText || '').slice(0, 6000);
+            let verdict = '可用';
+            if (/后会无期|江湖路远/.test(body)) verdict = '已停运';
+            else if (/parklogic|域名出售|站点创建成功|parked/i.test(body)) verdict = '已停放';
+            else if (/Just a moment|challenge-platform|cf-browser-verification/i.test(body)) verdict = 'CF人机验证';
+            else if (r.status >= 400) verdict = 'HTTP ' + r.status;
+            finish({ verdict, status: r.status });
+          },
+          onerror: () => finish({ verdict: '连不上', status: 0 }),
+          ontimeout: () => finish({ verdict: '超时', status: 0 })
+        });
+      } catch (e) { finish({ verdict: '异常', status: 0 }); }
+    });
   }
 
   /* ==================== 设置面板 ==================== */
@@ -126,11 +164,26 @@
         <label class="yg-row"><span>自动解析延迟(ms)</span><input id="yg-delay" type="number" min="0" max="15000" step="100" value="${cfg.delay}"></label>
         <label class="yg-row"><input type="checkbox" id="yg-ads" ${cfg.removeAds ? 'checked' : ''}><b>去广告</b></label>
         <label class="yg-row"><input type="checkbox" id="yg-fb" ${cfg.showFloatBtn ? 'checked' : ''}><b>显示浮动解析按钮</b></label>
+        <div class="yg-row"><span>线路状态</span><a id="yg-check" style="color:#ff5f00;cursor:pointer;font-size:13px">▶ 立即自检全部线路</a></div>
+        <div id="yg-health" class="yg-health"></div>
         <div class="yg-foot"><button id="yg-save">保存并生效</button><button id="yg-close">取消</button></div>
       </div>`;
     document.body.appendChild(wrap);
 
     wrap.querySelector('#yg-close').onclick = () => wrap.remove();
+    wrap.querySelector('#yg-check').onclick = async () => {
+      const box = wrap.querySelector('#yg-health');
+      const lines = apiList.map((a, i) => ({ name: a.name, base: a.name === '自定义' ? cfg.customApi : a.url, i }));
+      box.innerHTML = lines.map((l, k) => `<div data-k="${k}">… ${l.name}</div>`).join('');
+      for (let k = 0; k < lines.length; k++) {
+        const r = await probeLine(lines[k].base);
+        const row = box.querySelector('[data-k="' + k + '"]');
+        const mark = r.verdict === '可用' ? '✅' : '❌';
+        const cur = lines[k].i === cfg.apiIndex ? '（当前）' : '';
+        row.textContent = `${mark} ${lines[k].name}${cur} — ${r.verdict}`;
+        row.style.color = r.verdict === '可用' ? '#0a7d32' : '#c0392b';
+      }
+    };
     wrap.querySelector('#yg-save').onclick = () => {
       cfg.autoParse = wrap.querySelector('#yg-auto').checked;
       cfg.apiIndex = +wrap.querySelector('#yg-api').value;
@@ -200,6 +253,7 @@
     #yg-set input[type=text],#yg-set input:not([type]),#yg-set input[type=number],#yg-set select{
       flex:1;min-width:120px;padding:6px 8px;border:1px solid #ddd;border-radius:6px}
     #yg-set .yg-foot{margin-top:16px;text-align:right}
+    #yg-set .yg-health{font-size:12px;line-height:1.7;color:#666;max-height:120px;overflow:auto}
     #yg-set button{padding:7px 16px;margin-left:8px;border:0;border-radius:6px;cursor:pointer;background:#eee}
     #yg-set #yg-save{background:#ff5f00;color:#fff}
   `);
@@ -212,11 +266,20 @@
     if (!cfg.autoParse) return;
     if (!isDetailPage()) return;
     const href = location.href;
+    const box = document.getElementById('yg-parse-box');
+
+    // 自动弹窗已存在但 URL 变了（腾讯短链→集数页跳转、SPA 换集）→ 直接把 iframe 换到新地址
+    if (box && box.dataset.auto === '1') {
+      if (autoBoxFor !== href) openParse(href, cfg.openMode, true);
+      return;
+    }
     if (handled.has(href)) return;
     handled.add(href);
     setTimeout(() => {
       if (document.getElementById('yg-parse-box')) return;   // 用户已手动开过
-      openParse(href, cfg.openMode);
+      // 用“当前”URL 而不是延时前捕获的 URL：腾讯短链会在延时内被重定向到真实集数页
+      const cur = isDetailPage() ? location.href : href;
+      openParse(cur, cfg.openMode, true);
     }, cfg.delay);
   }
 
@@ -253,6 +316,9 @@
     maybeAuto();
     GM_registerMenuCommand('解析设置 / 配置解析接口', openSettings);
     GM_registerMenuCommand('立即解析当前页面', () => openParse(location.href, cfg.openMode));
+    // 调试钩子（控制台可直接调用；document 上挂一份便于跨沙箱调试）
+    window.__yg = { openSettings, openParse, probeLine, cfg, apiList };
+    try { document.__yg = window.__yg; } catch (e) {}
   };
 
   if (document.body) boot(); else window.addEventListener('DOMContentLoaded', boot);
